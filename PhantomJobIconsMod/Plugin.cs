@@ -76,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // Adds another button doing the same but for the main ui of the plugin
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
+        NamePlateGui.OnDataUpdate += OnNamePlateDataUpdate;
         NamePlateGui.OnPostDataUpdate += OnPostNamePlateDataUpdate;
 
         // Add a simple message to the log with level set to information
@@ -92,6 +93,7 @@ public sealed class Plugin : IDalamudPlugin
         Framework.Update -= OnFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
+        NamePlateGui.OnDataUpdate -= OnNamePlateDataUpdate;
         NamePlateGui.OnPostDataUpdate -= OnPostNamePlateDataUpdate;
         
         WindowSystem.RemoveAllWindows();
@@ -186,6 +188,13 @@ public sealed class Plugin : IDalamudPlugin
                 iconMin,
                 iconMin + new Vector2(iconSize)));
         }
+    }
+
+    // Subscribing here makes Dalamud invoke the post-update callback for all active nameplates each frame.
+    private static void OnNamePlateDataUpdate(
+        INamePlateUpdateContext _,
+        IReadOnlyList<INamePlateUpdateHandler> __)
+    {
     }
 
     private void DrawPhantomJobIcons()
