@@ -12,7 +12,9 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using PhantomJobIconsMod.Windows;
 using NativeBounds = FFXIVClientStructs.FFXIV.Common.Math.Bounds;
@@ -24,6 +26,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
@@ -39,6 +42,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IReadOnlyDictionary<byte, ISharedImmediateTexture> phantomJobIcons;
     private readonly Dictionary<uint, byte> jobsByEntityId = new();
     private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
+    private DateTime nextContentMemberRequestUtc;
 
     private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
@@ -64,6 +68,7 @@ public sealed class Plugin : IDalamudPlugin
         // Tell the UI system that we want our windows to be drawn through the window system
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw += DrawPhantomJobIcons;
+        Framework.Update += OnFrameworkUpdate;
 
         // This adds a button to the plugin installer entry of this plugin which allows
         // toggling the display status of the configuration ui
@@ -84,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         // Unregister all actions to not leak anything during disposal of plugin
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.Draw -= DrawPhantomJobIcons;
+        Framework.Update -= OnFrameworkUpdate;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         NamePlateGui.OnPostDataUpdate -= OnPostNamePlateDataUpdate;
@@ -99,6 +105,33 @@ public sealed class Plugin : IDalamudPlugin
     {
         // In response to the slash command, toggle the display status of our main ui
         MainWindow.Toggle();
+    }
+
+    private unsafe void OnFrameworkUpdate(IFramework _)
+    {
+        if (!Configuration.ShowPhantomJobs || PublicContentOccultCrescent.GetState() == null)
+        {
+            nextContentMemberRequestUtc = DateTime.MinValue;
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (now < nextContentMemberRequestUtc)
+            return;
+
+        nextContentMemberRequestUtc = now.AddSeconds(60);
+        var agentModule = AgentModule.Instance();
+        if (agentModule == null)
+            return;
+
+        var agent = agentModule->GetAgentByInternalId(AgentId.ContentMemberList);
+        if (agent == null || agent->IsAgentActive())
+            return;
+
+        var returnValue = stackalloc AtkValue[1];
+        var arguments = stackalloc AtkValue[1];
+        arguments[0].SetInt(1);
+        agent->ReceiveEvent(returnValue, arguments, 1, 0);
     }
 
     private unsafe void OnPostNamePlateDataUpdate(
