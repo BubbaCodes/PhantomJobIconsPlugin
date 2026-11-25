@@ -17,7 +17,6 @@ using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using PhantomJobIconsMod.Windows;
-using NativeBounds = FFXIVClientStructs.FFXIV.Common.Math.Bounds;
 
 namespace PhantomJobIconsMod;
 
@@ -28,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
@@ -190,12 +190,14 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        if (PublicContentOccultCrescent.GetState() == null)
+        var occultCrescentState = PublicContentOccultCrescent.GetState();
+        if (occultCrescentState == null)
         {
             displayContext = "outside Occult Crescent";
             return;
         }
 
+        var localPlayerAddress = ObjectTable.LocalPlayer?.Address ?? IntPtr.Zero;
         displayContext = "active";
         var contentMembers = InfoProxyContentMember.Instance();
         if (contentMembers == null)
@@ -241,6 +243,10 @@ public sealed class Plugin : IDalamudPlugin
 
             lastMatchedPlayerCount++;
             var jobId = hasContentIdMatch ? contentIdJob : entityIdJob;
+            if (player.Address == localPlayerAddress &&
+                phantomJobIcons.ContainsKey(occultCrescentState->CurrentSupportJob))
+                jobId = occultCrescentState->CurrentSupportJob;
+
             var plate = (AddonNamePlate.NamePlateObject*)handler.NamePlateObjectAddress;
             if (plate == null || plate->RootComponentNode == null || !plate->IsVisible ||
                 !plate->IsPlayerCharacter || plate->NameText == null ||
@@ -249,19 +255,21 @@ public sealed class Plugin : IDalamudPlugin
 
             lastVisibleNamePlateCount++;
             var nameNode = &plate->NameText->AtkResNode;
-            NativeBounds bounds;
-            nameNode->GetBounds(&bounds);
+            var scale = GetAccumulatedScale(nameNode);
+            ushort textWidth = 0;
+            ushort textHeight = 0;
+            plate->NameText->GetTextDrawSize(&textWidth, &textHeight, null, 0, -1, false);
 
-            var left = MathF.Min(bounds.Pos1.X, bounds.Pos2.X);
-            var top = MathF.Min(bounds.Pos1.Y, bounds.Pos2.Y);
-            var right = MathF.Max(bounds.Pos1.X, bounds.Pos2.X);
-            var bottom = MathF.Max(bounds.Pos1.Y, bounds.Pos2.Y);
-            var nameHeight = bottom - top;
-            if (right <= left || nameHeight <= 0)
+            var boxWidth = nameNode->Width * scale;
+            var drawnWidth = MathF.Min(textWidth * scale, boxWidth);
+            var nameHeight = nameNode->Height * scale;
+            if (drawnWidth <= 0 || nameHeight <= 0)
                 continue;
 
-            var iconSize = MathF.Min(20f, nameHeight);
-            var iconMin = new Vector2(right + 3f, top + (nameHeight - iconSize) / 2f);
+            var textLeft = nameNode->ScreenX + (boxWidth - drawnWidth) / 2f;
+            var centerY = nameNode->ScreenY + nameHeight / 2f;
+            var iconSize = MathF.Min(20f * scale, nameHeight);
+            var iconMin = new Vector2(textLeft + drawnWidth + 3f * scale, centerY - iconSize / 2f);
             phantomJobIconsToDraw.Add(new PhantomJobIconDraw(
                 phantomJobIcons[jobId],
                 iconMin,
@@ -269,6 +277,14 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         lastQueuedIconCount = phantomJobIconsToDraw.Count;
+    }
+
+    private static unsafe float GetAccumulatedScale(AtkResNode* node)
+    {
+        var scale = 1f;
+        for (var current = node; current != null; current = current->ParentNode)
+            scale *= current->ScaleX > 0f ? current->ScaleX : 1f;
+        return scale;
     }
 
     // Subscribing here makes Dalamud invoke the post-update callback for all active nameplates each frame.
