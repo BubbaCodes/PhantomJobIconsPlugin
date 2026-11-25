@@ -1,16 +1,21 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.NamePlate;
 using Dalamud.IoC;
+using Dalamud.Interface.Textures;
 using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using Dalamud.Game.Text.SeStringHandling;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using Lumina.Excel.Sheets;
 using PhantomJobIconsMod.Windows;
+using NativeBounds = FFXIVClientStructs.FFXIV.Common.Math.Bounds;
 
 namespace PhantomJobIconsMod;
 
@@ -20,23 +25,30 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
     private const string CommandName = "/pji";
+    private const uint PhantomJobIconIdOffset = 82271;
 
     public Configuration Configuration { get; init; }
 
     public readonly WindowSystem WindowSystem = new("PhantomJobIconsMod");
     private ConfigWindow ConfigWindow { get; init; }
     private MainWindow MainWindow { get; init; }
-    private readonly IReadOnlyDictionary<byte, string> phantomJobNames;
-    private readonly Dictionary<uint, string> jobsByEntityId = new();
+    private readonly IReadOnlyDictionary<byte, ISharedImmediateTexture> phantomJobIcons;
+    private readonly Dictionary<uint, byte> jobsByEntityId = new();
+    private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
+
+    private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-        phantomJobNames = DataManager.GetExcelSheet<MKDSupportJob>()
-            .ToDictionary(job => (byte)job.RowId, job => job.Name.ExtractText());
+        phantomJobIcons = DataManager.GetExcelSheet<MKDSupportJob>()
+            .ToDictionary(
+                job => (byte)job.RowId,
+                job => TextureProvider.GetFromGameIcon(new GameIconLookup(job.RowId + PhantomJobIconIdOffset, false, true)));
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -51,6 +63,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // Tell the UI system that we want our windows to be drawn through the window system
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw += DrawPhantomJobIcons;
 
         // This adds a button to the plugin installer entry of this plugin which allows
         // toggling the display status of the configuration ui
@@ -70,6 +83,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         // Unregister all actions to not leak anything during disposal of plugin
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= DrawPhantomJobIcons;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         NamePlateGui.OnPostDataUpdate -= OnPostNamePlateDataUpdate;
@@ -91,6 +105,7 @@ public sealed class Plugin : IDalamudPlugin
         INamePlateUpdateContext _,
         IReadOnlyList<INamePlateUpdateHandler> handlers)
     {
+        phantomJobIconsToDraw.Clear();
         if (!Configuration.ShowPhantomJobs || PublicContentOccultCrescent.GetState() == null)
             return;
 
@@ -103,21 +118,48 @@ public sealed class Plugin : IDalamudPlugin
         for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
         {
             var member = contentMembers->MemberData[i];
-            if (member.EntityId != 0 && phantomJobNames.TryGetValue(member.MKDSupportJob, out var jobName))
-                jobsByEntityId[member.EntityId] = jobName;
+            if (member.EntityId != 0 && phantomJobIcons.ContainsKey(member.MKDSupportJob))
+                jobsByEntityId[member.EntityId] = member.MKDSupportJob;
         }
 
         foreach (var handler in handlers)
         {
             var player = handler.PlayerCharacter;
-            if (player == null || !jobsByEntityId.TryGetValue(player.EntityId, out var jobName))
+            if (player == null || !jobsByEntityId.TryGetValue(player.EntityId, out var jobId))
                 continue;
 
-            handler.Name = new SeStringBuilder()
-                .Append(handler.Name)
-                .Append($"  [{jobName}]")
-                .Build();
+            var plate = (AddonNamePlate.NamePlateObject*)handler.NamePlateObjectAddress;
+            if (plate == null || plate->RootComponentNode == null || !plate->IsVisible ||
+                !plate->IsPlayerCharacter || plate->NameText == null ||
+                !plate->NameText->IsVisible())
+                continue;
+
+            var nameNode = &plate->NameText->AtkResNode;
+            NativeBounds bounds;
+            nameNode->GetBounds(&bounds);
+
+            var left = MathF.Min(bounds.Pos1.X, bounds.Pos2.X);
+            var top = MathF.Min(bounds.Pos1.Y, bounds.Pos2.Y);
+            var right = MathF.Max(bounds.Pos1.X, bounds.Pos2.X);
+            var bottom = MathF.Max(bounds.Pos1.Y, bounds.Pos2.Y);
+            var nameHeight = bottom - top;
+            if (right <= left || nameHeight <= 0)
+                continue;
+
+            var iconSize = MathF.Min(20f, nameHeight);
+            var iconMin = new Vector2(right + 3f, top + (nameHeight - iconSize) / 2f);
+            phantomJobIconsToDraw.Add(new PhantomJobIconDraw(
+                phantomJobIcons[jobId],
+                iconMin,
+                iconMin + new Vector2(iconSize)));
         }
+    }
+
+    private void DrawPhantomJobIcons()
+    {
+        var drawList = ImGui.GetForegroundDrawList();
+        foreach (var icon in phantomJobIconsToDraw)
+            drawList.AddImage(icon.Texture.GetWrapOrEmpty().Handle, icon.Min, icon.Max);
     }
     
     public void ToggleConfigUi() => ConfigWindow.Toggle();

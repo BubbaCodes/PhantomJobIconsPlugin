@@ -1,6 +1,6 @@
 # Phantom Job Icons Mod
 
-A Dalamud plugin that adds each recognized player's active Phantom Job beside their character name while you are in Occult Crescent. It reads the job IDs from the game's Occult Crescent content-member list and appends the localized job name to matching player nameplates. Nameplates without a matching member/job entry are left unchanged.
+A Dalamud plugin that displays each recognized player's active Phantom Job icon to the right of their character name while you are in Occult Crescent. It reads the job IDs from the game's Occult Crescent content-member list and matches them to the game's Phantom Job icons. Nameplates without a matching member/job entry are left unchanged.
 
 ## Install in-game
 

@@ -42,7 +42,7 @@ public class ConfigWindow : Window, IDisposable
     {
         // Can't ref a property, so use a local copy
         var configValue = configuration.ShowPhantomJobs;
-        if (ImGui.Checkbox("Show Phantom Jobs beside names", ref configValue))
+        if (ImGui.Checkbox("Show Phantom Job icons right of names", ref configValue))
         {
             configuration.ShowPhantomJobs = configValue;
             // Can save immediately on change if you don't want to provide a "Save and Close" button

@@ -22,7 +22,7 @@ public class MainWindow : Window
 
     public override void Draw()
     {
-        ImGui.TextWrapped("Shows each recognized player's active Phantom Job beside their nameplate while you are in Occult Crescent.");
+        ImGui.TextWrapped("Shows each recognized player's active Phantom Job icon to the right of their name while you are in Occult Crescent.");
         ImGui.Spacing();
         ImGui.Text($"Nameplate labels: {(plugin.Configuration.ShowPhantomJobs ? "On" : "Off")}");
 
