@@ -33,6 +33,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private const string CommandName = "/pji";
     private const uint PhantomJobIconIdOffset = 82271;
+    private const float PhantomJobIconSize = 24f;
+    private const float PhantomJobIconGap = 4f;
 
     public Configuration Configuration { get; init; }
 
@@ -268,12 +270,13 @@ public sealed class Plugin : IDalamudPlugin
 
             var textLeft = nameNode->ScreenX + (boxWidth - drawnWidth) / 2f;
             var centerY = nameNode->ScreenY + nameHeight / 2f;
-            var iconSize = MathF.Min(20f * scale, nameHeight);
-            var iconMin = new Vector2(textLeft + drawnWidth + 3f * scale, centerY - iconSize / 2f);
+            var iconMin = new Vector2(
+                textLeft + drawnWidth + PhantomJobIconGap,
+                centerY - PhantomJobIconSize / 2f);
             phantomJobIconsToDraw.Add(new PhantomJobIconDraw(
                 phantomJobIcons[jobId],
                 iconMin,
-                iconMin + new Vector2(iconSize)));
+                iconMin + new Vector2(PhantomJobIconSize)));
         }
 
         lastQueuedIconCount = phantomJobIconsToDraw.Count;
