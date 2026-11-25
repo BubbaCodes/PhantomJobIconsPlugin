@@ -43,6 +43,16 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<uint, byte> jobsByEntityId = new();
     private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
     private DateTime nextContentMemberRequestUtc;
+    private DateTime nextRuntimeDiagnosticsUtc;
+    private string contentMemberRequestStatus = "not attempted";
+    private string displayContext = "inactive";
+    private int lastContentMemberEntryCount;
+    private int lastMappedJobCount;
+    private int lastNamePlateHandlerCount;
+    private int lastPlayerHandlerCount;
+    private int lastMatchedPlayerCount;
+    private int lastVisibleNamePlateCount;
+    private int lastQueuedIconCount;
 
     private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
@@ -114,6 +124,9 @@ public sealed class Plugin : IDalamudPlugin
         if (!Configuration.ShowPhantomJobs || PublicContentOccultCrescent.GetState() == null)
         {
             nextContentMemberRequestUtc = DateTime.MinValue;
+            contentMemberRequestStatus = Configuration.ShowPhantomJobs
+                ? "outside Occult Crescent"
+                : "display disabled";
             return;
         }
 
@@ -124,16 +137,29 @@ public sealed class Plugin : IDalamudPlugin
         nextContentMemberRequestUtc = now.AddSeconds(60);
         var agentModule = AgentModule.Instance();
         if (agentModule == null)
+        {
+            contentMemberRequestStatus = "agent module unavailable";
             return;
+        }
 
         var agent = agentModule->GetAgentByInternalId(AgentId.ContentMemberList);
-        if (agent == null || agent->IsAgentActive())
+        if (agent == null)
+        {
+            contentMemberRequestStatus = "content-member agent unavailable";
             return;
+        }
+
+        if (agent->IsAgentActive())
+        {
+            contentMemberRequestStatus = "content-member agent active; request skipped";
+            return;
+        }
 
         var returnValue = stackalloc AtkValue[1];
         var arguments = stackalloc AtkValue[1];
         arguments[0].SetInt(1);
         agent->ReceiveEvent(returnValue, arguments, 1, 0);
+        contentMemberRequestStatus = "request sent";
     }
 
     private unsafe void OnPostNamePlateDataUpdate(
@@ -141,14 +167,35 @@ public sealed class Plugin : IDalamudPlugin
         IReadOnlyList<INamePlateUpdateHandler> handlers)
     {
         phantomJobIconsToDraw.Clear();
-        if (!Configuration.ShowPhantomJobs || PublicContentOccultCrescent.GetState() == null)
-            return;
+        jobsByEntityId.Clear();
+        lastNamePlateHandlerCount = handlers.Count;
+        lastPlayerHandlerCount = 0;
+        lastMatchedPlayerCount = 0;
+        lastVisibleNamePlateCount = 0;
+        lastQueuedIconCount = 0;
+        lastContentMemberEntryCount = 0;
+        lastMappedJobCount = 0;
 
+        if (!Configuration.ShowPhantomJobs)
+        {
+            displayContext = "display disabled";
+            return;
+        }
+
+        if (PublicContentOccultCrescent.GetState() == null)
+        {
+            displayContext = "outside Occult Crescent";
+            return;
+        }
+
+        displayContext = "active";
         var contentMembers = InfoProxyContentMember.Instance();
         if (contentMembers == null)
+        {
+            lastContentMemberEntryCount = -1;
             return;
+        }
 
-        jobsByEntityId.Clear();
         // The Occult Crescent member list maps each actor entity ID to its selected Phantom Job.
         for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
         {
@@ -157,18 +204,27 @@ public sealed class Plugin : IDalamudPlugin
                 jobsByEntityId[member.EntityId] = member.MKDSupportJob;
         }
 
+        lastContentMemberEntryCount = (int)contentMembers->EntryCount;
+        lastMappedJobCount = jobsByEntityId.Count;
+
         foreach (var handler in handlers)
         {
             var player = handler.PlayerCharacter;
-            if (player == null || !jobsByEntityId.TryGetValue(player.EntityId, out var jobId))
+            if (player == null)
                 continue;
 
+            lastPlayerHandlerCount++;
+            if (!jobsByEntityId.TryGetValue(player.EntityId, out var jobId))
+                continue;
+
+            lastMatchedPlayerCount++;
             var plate = (AddonNamePlate.NamePlateObject*)handler.NamePlateObjectAddress;
             if (plate == null || plate->RootComponentNode == null || !plate->IsVisible ||
                 !plate->IsPlayerCharacter || plate->NameText == null ||
                 !plate->NameText->IsVisible())
                 continue;
 
+            lastVisibleNamePlateCount++;
             var nameNode = &plate->NameText->AtkResNode;
             NativeBounds bounds;
             nameNode->GetBounds(&bounds);
@@ -188,6 +244,8 @@ public sealed class Plugin : IDalamudPlugin
                 iconMin,
                 iconMin + new Vector2(iconSize)));
         }
+
+        lastQueuedIconCount = phantomJobIconsToDraw.Count;
     }
 
     // Subscribing here makes Dalamud invoke the post-update callback for all active nameplates each frame.
@@ -200,8 +258,33 @@ public sealed class Plugin : IDalamudPlugin
     private void DrawPhantomJobIcons()
     {
         var drawList = ImGui.GetForegroundDrawList();
+        var logDiagnostics = DateTime.UtcNow >= nextRuntimeDiagnosticsUtc;
+        var loadedTextureCount = 0;
+        var failedTextureCount = 0;
+
         foreach (var icon in phantomJobIconsToDraw)
+        {
+            if (logDiagnostics)
+            {
+                if (icon.Texture.TryGetWrap(out var loadedTexture, out var exception) && loadedTexture is not null)
+                    loadedTextureCount++;
+                else if (exception is not null)
+                    failedTextureCount++;
+            }
+
             drawList.AddImage(icon.Texture.GetWrapOrEmpty().Handle, icon.Min, icon.Max);
+        }
+
+        if (!logDiagnostics)
+            return;
+
+        nextRuntimeDiagnosticsUtc = DateTime.UtcNow.AddSeconds(30);
+        Log.Information(
+            $"Runtime diagnostics: context={displayContext}, request={contentMemberRequestStatus}, " +
+            $"memberEntries={lastContentMemberEntryCount}, mappedJobs={lastMappedJobCount}, " +
+            $"handlers={lastNamePlateHandlerCount}, playerHandlers={lastPlayerHandlerCount}, " +
+            $"entityMatches={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
+            $"queuedIcons={lastQueuedIconCount}, loadedTextures={loadedTextureCount}, textureErrors={failedTextureCount}.");
     }
     
     public void ToggleConfigUi() => ConfigWindow.Toggle();
