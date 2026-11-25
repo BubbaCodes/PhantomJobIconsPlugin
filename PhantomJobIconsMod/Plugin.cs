@@ -269,10 +269,9 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
 
             var textLeft = nameNode->ScreenX + (boxWidth - drawnWidth) / 2f;
-            var centerY = nameNode->ScreenY + nameHeight / 2f;
             var iconMin = new Vector2(
-                textLeft + drawnWidth + PhantomJobIconGap,
-                centerY - PhantomJobIconSize / 2f);
+                textLeft + (drawnWidth - PhantomJobIconSize) / 2f,
+                nameNode->ScreenY - PhantomJobIconGap - PhantomJobIconSize);
             phantomJobIconsToDraw.Add(new PhantomJobIconDraw(
                 phantomJobIcons[jobId],
                 iconMin,
