@@ -41,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
     private MainWindow MainWindow { get; init; }
     private readonly IReadOnlyDictionary<byte, ISharedImmediateTexture> phantomJobIcons;
     private readonly Dictionary<uint, byte> jobsByEntityId = new();
+    private readonly Dictionary<ulong, byte> jobsByContentId = new();
     private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
     private DateTime nextContentMemberRequestUtc;
     private DateTime nextRuntimeDiagnosticsUtc;
@@ -48,9 +49,12 @@ public sealed class Plugin : IDalamudPlugin
     private string displayContext = "inactive";
     private int lastContentMemberEntryCount;
     private int lastMappedJobCount;
+    private int lastContentIdMappedJobCount;
     private int lastNamePlateHandlerCount;
     private int lastPlayerHandlerCount;
     private int lastMatchedPlayerCount;
+    private int lastEntityIdMatchCount;
+    private int lastContentIdMatchCount;
     private int lastVisibleNamePlateCount;
     private int lastQueuedIconCount;
 
@@ -168,13 +172,17 @@ public sealed class Plugin : IDalamudPlugin
     {
         phantomJobIconsToDraw.Clear();
         jobsByEntityId.Clear();
+        jobsByContentId.Clear();
         lastNamePlateHandlerCount = handlers.Count;
         lastPlayerHandlerCount = 0;
         lastMatchedPlayerCount = 0;
+        lastEntityIdMatchCount = 0;
+        lastContentIdMatchCount = 0;
         lastVisibleNamePlateCount = 0;
         lastQueuedIconCount = 0;
         lastContentMemberEntryCount = 0;
         lastMappedJobCount = 0;
+        lastContentIdMappedJobCount = 0;
 
         if (!Configuration.ShowPhantomJobs)
         {
@@ -196,16 +204,22 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        // The Occult Crescent member list maps each actor entity ID to its selected Phantom Job.
+        // Pair each member's selected job with both its entity ID and stable content ID.
         for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
         {
             var member = contentMembers->MemberData[i];
-            if (member.EntityId != 0 && phantomJobIcons.ContainsKey(member.MKDSupportJob))
-                jobsByEntityId[member.EntityId] = member.MKDSupportJob;
+            if (member.EntityId == 0 || !phantomJobIcons.ContainsKey(member.MKDSupportJob))
+                continue;
+
+            jobsByEntityId[member.EntityId] = member.MKDSupportJob;
+            var contentId = contentMembers->GetContentIdForEntry((uint)i);
+            if (contentId != 0)
+                jobsByContentId[contentId] = member.MKDSupportJob;
         }
 
         lastContentMemberEntryCount = (int)contentMembers->EntryCount;
         lastMappedJobCount = jobsByEntityId.Count;
+        lastContentIdMappedJobCount = jobsByContentId.Count;
 
         foreach (var handler in handlers)
         {
@@ -214,10 +228,19 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
 
             lastPlayerHandlerCount++;
-            if (!jobsByEntityId.TryGetValue(player.EntityId, out var jobId))
+            var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
+            var contentId = character == null ? 0 : character->ContentId;
+            var hasContentIdMatch = jobsByContentId.TryGetValue(contentId, out var contentIdJob);
+            var hasEntityIdMatch = jobsByEntityId.TryGetValue(player.EntityId, out var entityIdJob);
+            if (hasContentIdMatch)
+                lastContentIdMatchCount++;
+            if (hasEntityIdMatch)
+                lastEntityIdMatchCount++;
+            if (!hasContentIdMatch && !hasEntityIdMatch)
                 continue;
 
             lastMatchedPlayerCount++;
+            var jobId = hasContentIdMatch ? contentIdJob : entityIdJob;
             var plate = (AddonNamePlate.NamePlateObject*)handler.NamePlateObjectAddress;
             if (plate == null || plate->RootComponentNode == null || !plate->IsVisible ||
                 !plate->IsPlayerCharacter || plate->NameText == null ||
@@ -282,8 +305,10 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information(
             $"Runtime diagnostics: context={displayContext}, request={contentMemberRequestStatus}, " +
             $"memberEntries={lastContentMemberEntryCount}, mappedJobs={lastMappedJobCount}, " +
+            $"contentIdMappedJobs={lastContentIdMappedJobCount}, " +
             $"handlers={lastNamePlateHandlerCount}, playerHandlers={lastPlayerHandlerCount}, " +
-            $"entityMatches={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
+            $"contentIdMatches={lastContentIdMatchCount}, entityIdMatches={lastEntityIdMatchCount}, " +
+            $"matchedPlayers={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
             $"queuedIcons={lastQueuedIconCount}, loadedTextures={loadedTextureCount}, textureErrors={failedTextureCount}.");
     }
     
