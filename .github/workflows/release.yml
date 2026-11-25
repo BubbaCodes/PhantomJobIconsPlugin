@@ -1,0 +1,63 @@
+name: Release Phantom Job Icons Mod
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Dalamud
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          [xml]$project = Get-Content '.\PhantomJobIconsMod\PhantomJobIconsMod.csproj' -Raw
+          $projectVersion = $project.Project.PropertyGroup.Version
+          if ($tagVersion -ne $projectVersion) {
+            throw "Release tag version '$tagVersion' does not match project version '$projectVersion'."
+          }
+          $repository = Get-Content '.\repo.json' -Raw | ConvertFrom-Json
+          if ($repository[0].AssemblyVersion -ne $projectVersion) {
+            throw "repo.json AssemblyVersion '$($repository[0].AssemblyVersion)' does not match project version '$projectVersion'."
+          }
+
+      - name: Build plugin
+        run: dotnet build --configuration Release
+
+      - name: Package plugin
+        shell: pwsh
+        run: |
+          $outputRoot = '.\PhantomJobIconsMod\bin\x64\Release'
+          $manifest = Get-ChildItem $outputRoot -Filter 'PhantomJobIconsMod.json' -Recurse -File | Select-Object -First 1
+          if ($null -eq $manifest) {
+            throw "Plugin manifest not found under $outputRoot"
+          }
+          $pluginOutput = $manifest.DirectoryName
+          if (-not (Test-Path (Join-Path $pluginOutput 'PhantomJobIconsMod.dll'))) {
+            throw "Plugin DLL not found beside manifest in $pluginOutput"
+          }
+          Compress-Archive -Path "$pluginOutput\*" -DestinationPath '.\PhantomJobIconsMod.zip' -Force
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$env:GITHUB_REF_NAME" .\PhantomJobIconsMod.zip --title "Phantom Job Icons Mod $env:GITHUB_REF_NAME" --notes "Dalamud plugin release."

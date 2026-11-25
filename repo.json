@@ -1,0 +1,23 @@
+[
+  {
+    "Author": "BubbaCodes",
+    "Name": "Phantom Job Icons Mod",
+    "Description": "Adds each recognized Occult Crescent member's active Phantom Job to their nameplate.",
+    "Punchline": "Shows Occult Crescent Phantom Jobs beside player names.",
+    "InternalName": "PhantomJobIconsMod",
+    "AssemblyVersion": "0.0.0.1",
+    "RepoUrl": "https://github.com/BubbaCodes/PhantomJobIconsPlugin",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "occult-crescent",
+      "phantom-jobs",
+      "nameplates"
+    ],
+    "DalamudApiLevel": 15,
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadLinkInstall": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip",
+    "DownloadLinkTesting": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip",
+    "DownloadLinkUpdate": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip"
+  }
+]

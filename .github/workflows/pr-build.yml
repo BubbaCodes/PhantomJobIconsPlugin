@@ -2,7 +2,7 @@ name: Build Phantom Job Icons Mod
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
 
@@ -33,6 +33,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: PhantomJobIconsMod
-        path: .\PhantomJobIconsMod\bin\x64\Release\PhantomJobIconsMod\*
+        path: .\PhantomJobIconsMod\bin\x64\Release\**
         if-no-files-found: error
         retention-days: 1

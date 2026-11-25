@@ -4,7 +4,7 @@
     <Version>0.0.0.1</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
-    <Author>your name here</Author>
+    <Author>BubbaCodes</Author>
     <Name>Phantom Job Icons Mod</Name>
     <Punchline>Shows Occult Crescent Phantom Jobs beside player names.</Punchline>
     <Description>Adds each recognized Occult Crescent member's active Phantom Job to their nameplate.</Description>
