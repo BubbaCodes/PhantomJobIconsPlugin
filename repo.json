@@ -16,6 +16,7 @@
     "DalamudApiLevel": 15,
     "IsHide": false,
     "IsTestingExclusive": false,
+    "IconUrl": "https://raw.githubusercontent.com/BubbaCodes/PhantomJobIconsPlugin/main/icon.png",
     "DownloadLinkInstall": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip",
     "DownloadLinkTesting": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip",
     "DownloadLinkUpdate": "https://github.com/BubbaCodes/PhantomJobIconsPlugin/releases/latest/download/PhantomJobIconsMod.zip"
