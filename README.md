@@ -1,6 +1,6 @@
 # Phantom Job Icons Mod
 
-A Dalamud plugin that displays verified non-party players' Phantom Job icons centered above their character names while you are in Occult Crescent. It hides icons for you and your party, and leaves unmatched or ambiguous nameplates unchanged rather than guessing their jobs.
+A Dalamud plugin that displays verified non-party players' Phantom Job icons centered above their character names while you are in Occult Crescent. It hides icons for you and your party, retains the last verified job assignments during temporary roster mismatches, and refreshes them when a new stable mapping is available. Unmatched nameplates are left unchanged rather than guessing their jobs.
 
 ## Install in-game
 

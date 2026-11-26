@@ -47,6 +47,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IReadOnlyDictionary<byte, ISharedImmediateTexture> phantomJobIcons;
     private readonly Dictionary<ulong, byte> jobsByRawContentId = new();
     private readonly Dictionary<ulong, byte> jobsByEntryContentId = new();
+    private readonly Dictionary<ulong, byte> pendingVerifiedJobsByContentId = new();
+    private readonly Dictionary<ulong, byte> cachedVerifiedJobsByContentId = new();
     private readonly HashSet<ulong> partyContentIds = new();
     private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
     private DateTime nextContentMemberRequestUtc;
@@ -67,6 +69,7 @@ public sealed class Plugin : IDalamudPlugin
     private int lastLocalRawJobId = -1;
     private int lastLocalEntryJobId = -1;
     private string lastJobMapSource = "unverified";
+    private int pendingVerifiedMapSamples;
 
     private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
@@ -137,6 +140,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (!Configuration.ShowPhantomJobs || PublicContentOccultCrescent.GetState() == null)
         {
+            ClearVerifiedJobMaps();
             nextContentMemberRequestUtc = DateTime.MinValue;
             contentMemberRequestStatus = Configuration.ShowPhantomJobs
                 ? "outside Occult Crescent"
@@ -201,6 +205,7 @@ public sealed class Plugin : IDalamudPlugin
 
         if (!Configuration.ShowPhantomJobs)
         {
+            ClearVerifiedJobMaps();
             displayContext = "display disabled";
             return;
         }
@@ -208,6 +213,7 @@ public sealed class Plugin : IDalamudPlugin
         var occultCrescentState = PublicContentOccultCrescent.GetState();
         if (occultCrescentState == null)
         {
+            ClearVerifiedJobMaps();
             displayContext = "outside Occult Crescent";
             return;
         }
@@ -227,25 +233,31 @@ public sealed class Plugin : IDalamudPlugin
 
         displayContext = "active";
         var contentMembers = InfoProxyContentMember.Instance();
+        IReadOnlyDictionary<ulong, byte>? currentVerifiedMap = null;
         if (contentMembers == null || contentMembers->CharData == null)
         {
             lastContentMemberEntryCount = -1;
-            return;
         }
-
-        for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
+        else
         {
-            var member = contentMembers->MemberData[i];
-            if (!phantomJobIcons.ContainsKey(member.MKDSupportJob))
-                continue;
+            for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
+            {
+                var member = contentMembers->MemberData[i];
+                if (!phantomJobIcons.ContainsKey(member.MKDSupportJob))
+                    continue;
 
-            var rawContentId = contentMembers->CharData[i].ContentId;
-            if (rawContentId != 0)
-                jobsByRawContentId[rawContentId] = member.MKDSupportJob;
+                var rawContentId = contentMembers->CharData[i].ContentId;
+                if (rawContentId != 0)
+                    jobsByRawContentId[rawContentId] = member.MKDSupportJob;
 
-            var entryContentId = contentMembers->GetContentIdForEntry((uint)i);
-            if (entryContentId != 0)
-                jobsByEntryContentId[entryContentId] = member.MKDSupportJob;
+                var entryContentId = contentMembers->GetContentIdForEntry((uint)i);
+                if (entryContentId != 0)
+                    jobsByEntryContentId[entryContentId] = member.MKDSupportJob;
+            }
+
+            lastContentMemberEntryCount = (int)contentMembers->EntryCount;
+            lastRawMappedJobCount = jobsByRawContentId.Count;
+            lastEntryMappedJobCount = jobsByEntryContentId.Count;
         }
 
         lastLocalStateJobId = occultCrescentState->CurrentSupportJob;
@@ -257,32 +269,13 @@ public sealed class Plugin : IDalamudPlugin
                 lastLocalEntryJobId = localEntryJobId;
         }
 
-        lastContentMemberEntryCount = (int)contentMembers->EntryCount;
-        lastRawMappedJobCount = jobsByRawContentId.Count;
-        lastEntryMappedJobCount = jobsByEntryContentId.Count;
-
-        IReadOnlyDictionary<ulong, byte>? jobsByContentId = null;
         var rawMatchesLocal = lastLocalRawJobId >= 0 && lastLocalRawJobId == lastLocalStateJobId;
         var entryMatchesLocal = lastLocalEntryJobId >= 0 && lastLocalEntryJobId == lastLocalStateJobId;
         if (rawMatchesLocal && entryMatchesLocal)
         {
-            var mapsAreEquivalent = jobsByRawContentId.Count == jobsByEntryContentId.Count;
-            if (mapsAreEquivalent)
+            if (HaveSameJobs(jobsByRawContentId, jobsByEntryContentId))
             {
-                foreach (var entry in jobsByRawContentId)
-                {
-                    if (jobsByEntryContentId.TryGetValue(entry.Key, out var entryJobId) &&
-                        entryJobId == entry.Value)
-                        continue;
-
-                    mapsAreEquivalent = false;
-                    break;
-                }
-            }
-
-            if (mapsAreEquivalent)
-            {
-                jobsByContentId = jobsByRawContentId;
+                currentVerifiedMap = jobsByRawContentId;
                 lastJobMapSource = "both";
             }
             else
@@ -292,20 +285,49 @@ public sealed class Plugin : IDalamudPlugin
         }
         else if (rawMatchesLocal)
         {
-            jobsByContentId = jobsByRawContentId;
+            currentVerifiedMap = jobsByRawContentId;
             lastJobMapSource = "raw";
         }
         else if (entryMatchesLocal)
         {
-            jobsByContentId = jobsByEntryContentId;
+            currentVerifiedMap = jobsByEntryContentId;
             lastJobMapSource = "entry";
         }
 
-        if (jobsByContentId == null)
+        if (currentVerifiedMap == null)
+        {
+            pendingVerifiedJobsByContentId.Clear();
+            pendingVerifiedMapSamples = 0;
+        }
+        else
+        {
+            if (!HaveSameJobs(currentVerifiedMap, pendingVerifiedJobsByContentId))
+            {
+                pendingVerifiedJobsByContentId.Clear();
+                foreach (var entry in currentVerifiedMap)
+                    pendingVerifiedJobsByContentId[entry.Key] = entry.Value;
+                pendingVerifiedMapSamples = 1;
+            }
+            else
+            {
+                pendingVerifiedMapSamples++;
+            }
+
+            if (pendingVerifiedMapSamples >= 2)
+            {
+                foreach (var entry in pendingVerifiedJobsByContentId)
+                    cachedVerifiedJobsByContentId[entry.Key] = entry.Value;
+            }
+        }
+
+        if (cachedVerifiedJobsByContentId.Count == 0)
         {
             displayContext = "job mapping unverified";
             return;
         }
+
+        if (currentVerifiedMap == null)
+            displayContext = "using last verified jobs";
 
         foreach (var handler in handlers)
         {
@@ -323,7 +345,7 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             }
 
-            if (!jobsByContentId.TryGetValue(contentId, out var jobId))
+            if (!cachedVerifiedJobsByContentId.TryGetValue(contentId, out var jobId))
                 continue;
 
             lastContentIdMatchCount++;
@@ -412,11 +434,35 @@ public sealed class Plugin : IDalamudPlugin
             $"memberEntries={lastContentMemberEntryCount}, rawMappedJobs={lastRawMappedJobCount}, " +
             $"entryMappedJobs={lastEntryMappedJobCount}, jobMap={lastJobMapSource}, " +
             $"localStateJob={lastLocalStateJobId}, localRawJob={lastLocalRawJobId}, " +
-            $"localEntryJob={lastLocalEntryJobId}, " +
+            $"localEntryJob={lastLocalEntryJobId}, cachedJobs={cachedVerifiedJobsByContentId.Count}, " +
+            $"stableMapSamples={pendingVerifiedMapSamples}, " +
             $"handlers={lastNamePlateHandlerCount}, playerHandlers={lastPlayerHandlerCount}, " +
             $"contentIdMatches={lastContentIdMatchCount}, excludedPartyPlayers={lastExcludedPlayerCount}, " +
             $"matchedPlayers={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
             $"queuedIcons={lastQueuedIconCount}, loadedTextures={loadedTextureCount}, textureErrors={failedTextureCount}.");
+    }
+
+    private void ClearVerifiedJobMaps()
+    {
+        pendingVerifiedJobsByContentId.Clear();
+        cachedVerifiedJobsByContentId.Clear();
+        pendingVerifiedMapSamples = 0;
+    }
+
+    private static bool HaveSameJobs(
+        IReadOnlyDictionary<ulong, byte> first,
+        IReadOnlyDictionary<ulong, byte> second)
+    {
+        if (first.Count != second.Count)
+            return false;
+
+        foreach (var entry in first)
+        {
+            if (!second.TryGetValue(entry.Key, out var jobId) || jobId != entry.Value)
+                return false;
+        }
+
+        return true;
     }
     
     public void ToggleConfigUi() => ConfigWindow.Toggle();

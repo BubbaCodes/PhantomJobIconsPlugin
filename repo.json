@@ -5,7 +5,7 @@
     "Description": "Shows a verified Phantom Job icon above each non-party nameplate in the same Occult Crescent instance.",
     "Punchline": "Shows verified Phantom Jobs above non-party nameplates.",
     "InternalName": "PhantomJobIconsMod",
-    "AssemblyVersion": "0.0.0.13",
+    "AssemblyVersion": "0.0.0.14",
     "RepoUrl": "https://github.com/BubbaCodes/PhantomJobIconsPlugin",
     "ApplicableVersion": "any",
     "Tags": [
