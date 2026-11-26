@@ -36,7 +36,7 @@ public sealed class Plugin : IDalamudPlugin
     private const uint PhantomJobIconIdOffset = 82271;
     private const int ContentMemberRefreshSeconds = 15;
     private const float PhantomJobIconSize = 24f;
-    private const float PhantomJobIconGap = 4f;
+    private const float PhantomJobIconGap = 8f;
 
     public Configuration Configuration { get; init; }
 
@@ -61,6 +61,8 @@ public sealed class Plugin : IDalamudPlugin
     private int lastContentIdMatchCount;
     private int lastVisibleNamePlateCount;
     private int lastQueuedIconCount;
+    private int lastLocalStateJobId = -1;
+    private int lastLocalMemberJobId = -1;
 
     private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
@@ -187,6 +189,8 @@ public sealed class Plugin : IDalamudPlugin
         lastContentMemberEntryCount = 0;
         lastMappedJobCount = 0;
         lastContentIdMappedJobCount = 0;
+        lastLocalStateJobId = -1;
+        lastLocalMemberJobId = -1;
 
         if (!Configuration.ShowPhantomJobs)
         {
@@ -204,13 +208,13 @@ public sealed class Plugin : IDalamudPlugin
         var localPlayerAddress = ObjectTable.LocalPlayer?.Address ?? IntPtr.Zero;
         displayContext = "active";
         var contentMembers = InfoProxyContentMember.Instance();
-        if (contentMembers == null)
+        if (contentMembers == null || contentMembers->CharData == null)
         {
             lastContentMemberEntryCount = -1;
             return;
         }
 
-        // Pair each member's selected job with both its entity ID and stable content ID.
+        // MemberData and CharData are parallel raw arrays; entry getters may follow display sorting.
         for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
         {
             var member = contentMembers->MemberData[i];
@@ -218,10 +222,16 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
 
             jobsByEntityId[member.EntityId] = member.MKDSupportJob;
-            var contentId = contentMembers->GetContentIdForEntry((uint)i);
+            var contentId = contentMembers->CharData[i].ContentId;
             if (contentId != 0)
                 jobsByContentId[contentId] = member.MKDSupportJob;
         }
+
+        lastLocalStateJobId = occultCrescentState->CurrentSupportJob;
+        var localCharacter = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)localPlayerAddress;
+        if (localCharacter != null &&
+            jobsByContentId.TryGetValue(localCharacter->ContentId, out var localMemberJobId))
+            lastLocalMemberJobId = localMemberJobId;
 
         lastContentMemberEntryCount = (int)contentMembers->EntryCount;
         lastMappedJobCount = jobsByEntityId.Count;
@@ -270,11 +280,6 @@ public sealed class Plugin : IDalamudPlugin
             var top = MathF.Min(bounds.Pos1.Y, bounds.Pos2.Y);
             var right = MathF.Max(bounds.Pos1.X, bounds.Pos2.X);
             var bottom = MathF.Max(bounds.Pos1.Y, bounds.Pos2.Y);
-
-            NativeBounds plateBounds;
-            ((AtkResNode*)plate->RootComponentNode)->GetBounds(&plateBounds);
-            var plateTop = MathF.Min(plateBounds.Pos1.Y, plateBounds.Pos2.Y);
-            top = MathF.Min(top, plateTop);
 
             var boxWidth = right - left;
             var drawnWidth = MathF.Min(textWidth * scale, boxWidth);
@@ -338,6 +343,7 @@ public sealed class Plugin : IDalamudPlugin
             $"Runtime diagnostics: context={displayContext}, request={contentMemberRequestStatus}, " +
             $"memberEntries={lastContentMemberEntryCount}, mappedJobs={lastMappedJobCount}, " +
             $"contentIdMappedJobs={lastContentIdMappedJobCount}, " +
+            $"localStateJob={lastLocalStateJobId}, localMemberJob={lastLocalMemberJobId}, " +
             $"handlers={lastNamePlateHandlerCount}, playerHandlers={lastPlayerHandlerCount}, " +
             $"contentIdMatches={lastContentIdMatchCount}, entityIdMatches={lastEntityIdMatchCount}, " +
             $"matchedPlayers={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
