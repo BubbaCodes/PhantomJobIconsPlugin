@@ -29,6 +29,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+    [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
@@ -44,25 +45,28 @@ public sealed class Plugin : IDalamudPlugin
     private ConfigWindow ConfigWindow { get; init; }
     private MainWindow MainWindow { get; init; }
     private readonly IReadOnlyDictionary<byte, ISharedImmediateTexture> phantomJobIcons;
-    private readonly Dictionary<uint, byte> jobsByEntityId = new();
-    private readonly Dictionary<ulong, byte> jobsByContentId = new();
+    private readonly Dictionary<ulong, byte> jobsByRawContentId = new();
+    private readonly Dictionary<ulong, byte> jobsByEntryContentId = new();
+    private readonly HashSet<ulong> partyContentIds = new();
     private readonly List<PhantomJobIconDraw> phantomJobIconsToDraw = new();
     private DateTime nextContentMemberRequestUtc;
     private DateTime nextRuntimeDiagnosticsUtc;
     private string contentMemberRequestStatus = "not attempted";
     private string displayContext = "inactive";
     private int lastContentMemberEntryCount;
-    private int lastMappedJobCount;
-    private int lastContentIdMappedJobCount;
+    private int lastRawMappedJobCount;
+    private int lastEntryMappedJobCount;
     private int lastNamePlateHandlerCount;
     private int lastPlayerHandlerCount;
     private int lastMatchedPlayerCount;
-    private int lastEntityIdMatchCount;
     private int lastContentIdMatchCount;
+    private int lastExcludedPlayerCount;
     private int lastVisibleNamePlateCount;
     private int lastQueuedIconCount;
     private int lastLocalStateJobId = -1;
-    private int lastLocalMemberJobId = -1;
+    private int lastLocalRawJobId = -1;
+    private int lastLocalEntryJobId = -1;
+    private string lastJobMapSource = "unverified";
 
     private readonly record struct PhantomJobIconDraw(ISharedImmediateTexture Texture, Vector2 Min, Vector2 Max);
 
@@ -177,20 +181,23 @@ public sealed class Plugin : IDalamudPlugin
         IReadOnlyList<INamePlateUpdateHandler> handlers)
     {
         phantomJobIconsToDraw.Clear();
-        jobsByEntityId.Clear();
-        jobsByContentId.Clear();
+        jobsByRawContentId.Clear();
+        jobsByEntryContentId.Clear();
+        partyContentIds.Clear();
         lastNamePlateHandlerCount = handlers.Count;
         lastPlayerHandlerCount = 0;
         lastMatchedPlayerCount = 0;
-        lastEntityIdMatchCount = 0;
         lastContentIdMatchCount = 0;
+        lastExcludedPlayerCount = 0;
         lastVisibleNamePlateCount = 0;
         lastQueuedIconCount = 0;
         lastContentMemberEntryCount = 0;
-        lastMappedJobCount = 0;
-        lastContentIdMappedJobCount = 0;
+        lastRawMappedJobCount = 0;
+        lastEntryMappedJobCount = 0;
         lastLocalStateJobId = -1;
-        lastLocalMemberJobId = -1;
+        lastLocalRawJobId = -1;
+        lastLocalEntryJobId = -1;
+        lastJobMapSource = "unverified";
 
         if (!Configuration.ShowPhantomJobs)
         {
@@ -206,6 +213,18 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         var localPlayerAddress = ObjectTable.LocalPlayer?.Address ?? IntPtr.Zero;
+        var localCharacter = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)localPlayerAddress;
+        var localContentId = localCharacter == null ? 0 : localCharacter->ContentId;
+        for (var i = 0; i < PartyList.Length; i++)
+        {
+            var partyMember = PartyList[i];
+            if (partyMember != null && partyMember.ContentId != 0)
+                partyContentIds.Add(partyMember.ContentId);
+        }
+
+        if (localContentId != 0)
+            partyContentIds.Add(localContentId);
+
         displayContext = "active";
         var contentMembers = InfoProxyContentMember.Instance();
         if (contentMembers == null || contentMembers->CharData == null)
@@ -214,28 +233,79 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        // MemberData and CharData are parallel raw arrays; entry getters may follow display sorting.
         for (var i = 0; i < contentMembers->EntryCount && i < 200; i++)
         {
             var member = contentMembers->MemberData[i];
-            if (member.EntityId == 0 || !phantomJobIcons.ContainsKey(member.MKDSupportJob))
+            if (!phantomJobIcons.ContainsKey(member.MKDSupportJob))
                 continue;
 
-            jobsByEntityId[member.EntityId] = member.MKDSupportJob;
-            var contentId = contentMembers->CharData[i].ContentId;
-            if (contentId != 0)
-                jobsByContentId[contentId] = member.MKDSupportJob;
+            var rawContentId = contentMembers->CharData[i].ContentId;
+            if (rawContentId != 0)
+                jobsByRawContentId[rawContentId] = member.MKDSupportJob;
+
+            var entryContentId = contentMembers->GetContentIdForEntry((uint)i);
+            if (entryContentId != 0)
+                jobsByEntryContentId[entryContentId] = member.MKDSupportJob;
         }
 
         lastLocalStateJobId = occultCrescentState->CurrentSupportJob;
-        var localCharacter = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)localPlayerAddress;
-        if (localCharacter != null &&
-            jobsByContentId.TryGetValue(localCharacter->ContentId, out var localMemberJobId))
-            lastLocalMemberJobId = localMemberJobId;
+        if (localContentId != 0)
+        {
+            if (jobsByRawContentId.TryGetValue(localContentId, out var localRawJobId))
+                lastLocalRawJobId = localRawJobId;
+            if (jobsByEntryContentId.TryGetValue(localContentId, out var localEntryJobId))
+                lastLocalEntryJobId = localEntryJobId;
+        }
 
         lastContentMemberEntryCount = (int)contentMembers->EntryCount;
-        lastMappedJobCount = jobsByEntityId.Count;
-        lastContentIdMappedJobCount = jobsByContentId.Count;
+        lastRawMappedJobCount = jobsByRawContentId.Count;
+        lastEntryMappedJobCount = jobsByEntryContentId.Count;
+
+        IReadOnlyDictionary<ulong, byte>? jobsByContentId = null;
+        var rawMatchesLocal = lastLocalRawJobId >= 0 && lastLocalRawJobId == lastLocalStateJobId;
+        var entryMatchesLocal = lastLocalEntryJobId >= 0 && lastLocalEntryJobId == lastLocalStateJobId;
+        if (rawMatchesLocal && entryMatchesLocal)
+        {
+            var mapsAreEquivalent = jobsByRawContentId.Count == jobsByEntryContentId.Count;
+            if (mapsAreEquivalent)
+            {
+                foreach (var entry in jobsByRawContentId)
+                {
+                    if (jobsByEntryContentId.TryGetValue(entry.Key, out var entryJobId) &&
+                        entryJobId == entry.Value)
+                        continue;
+
+                    mapsAreEquivalent = false;
+                    break;
+                }
+            }
+
+            if (mapsAreEquivalent)
+            {
+                jobsByContentId = jobsByRawContentId;
+                lastJobMapSource = "both";
+            }
+            else
+            {
+                lastJobMapSource = "ambiguous";
+            }
+        }
+        else if (rawMatchesLocal)
+        {
+            jobsByContentId = jobsByRawContentId;
+            lastJobMapSource = "raw";
+        }
+        else if (entryMatchesLocal)
+        {
+            jobsByContentId = jobsByEntryContentId;
+            lastJobMapSource = "entry";
+        }
+
+        if (jobsByContentId == null)
+        {
+            displayContext = "job mapping unverified";
+            return;
+        }
 
         foreach (var handler in handlers)
         {
@@ -246,20 +316,18 @@ public sealed class Plugin : IDalamudPlugin
             lastPlayerHandlerCount++;
             var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address;
             var contentId = character == null ? 0 : character->ContentId;
-            var hasContentIdMatch = jobsByContentId.TryGetValue(contentId, out var contentIdJob);
-            var hasEntityIdMatch = jobsByEntityId.TryGetValue(player.EntityId, out var entityIdJob);
-            if (hasContentIdMatch)
-                lastContentIdMatchCount++;
-            if (hasEntityIdMatch)
-                lastEntityIdMatchCount++;
-            if (!hasContentIdMatch && !hasEntityIdMatch)
+
+            if (partyContentIds.Contains(contentId))
+            {
+                lastExcludedPlayerCount++;
+                continue;
+            }
+
+            if (!jobsByContentId.TryGetValue(contentId, out var jobId))
                 continue;
 
+            lastContentIdMatchCount++;
             lastMatchedPlayerCount++;
-            var jobId = hasContentIdMatch ? contentIdJob : entityIdJob;
-            if (player.Address == localPlayerAddress &&
-                phantomJobIcons.ContainsKey(occultCrescentState->CurrentSupportJob))
-                jobId = occultCrescentState->CurrentSupportJob;
 
             var plate = (AddonNamePlate.NamePlateObject*)handler.NamePlateObjectAddress;
             if (plate == null || plate->RootComponentNode == null || !plate->IsVisible ||
@@ -341,11 +409,12 @@ public sealed class Plugin : IDalamudPlugin
         nextRuntimeDiagnosticsUtc = DateTime.UtcNow.AddSeconds(30);
         Log.Information(
             $"Runtime diagnostics: context={displayContext}, request={contentMemberRequestStatus}, " +
-            $"memberEntries={lastContentMemberEntryCount}, mappedJobs={lastMappedJobCount}, " +
-            $"contentIdMappedJobs={lastContentIdMappedJobCount}, " +
-            $"localStateJob={lastLocalStateJobId}, localMemberJob={lastLocalMemberJobId}, " +
+            $"memberEntries={lastContentMemberEntryCount}, rawMappedJobs={lastRawMappedJobCount}, " +
+            $"entryMappedJobs={lastEntryMappedJobCount}, jobMap={lastJobMapSource}, " +
+            $"localStateJob={lastLocalStateJobId}, localRawJob={lastLocalRawJobId}, " +
+            $"localEntryJob={lastLocalEntryJobId}, " +
             $"handlers={lastNamePlateHandlerCount}, playerHandlers={lastPlayerHandlerCount}, " +
-            $"contentIdMatches={lastContentIdMatchCount}, entityIdMatches={lastEntityIdMatchCount}, " +
+            $"contentIdMatches={lastContentIdMatchCount}, excludedPartyPlayers={lastExcludedPlayerCount}, " +
             $"matchedPlayers={lastMatchedPlayerCount}, visibleNameplates={lastVisibleNamePlateCount}, " +
             $"queuedIcons={lastQueuedIconCount}, loadedTextures={loadedTextureCount}, textureErrors={failedTextureCount}.");
     }

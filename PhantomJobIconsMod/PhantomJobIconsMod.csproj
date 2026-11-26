@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.0.0.12</Version>
+    <Version>0.0.0.13</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>BubbaCodes</Author>
     <Name>Phantom Job Icons Mod</Name>
-    <Punchline>Shows Occult Crescent Phantom Jobs beside player names.</Punchline>
-    <Description>Adds each recognized Occult Crescent member's active Phantom Job to their nameplate.</Description>
+    <Punchline>Shows verified Phantom Jobs above non-party nameplates.</Punchline>
+    <Description>Shows a verified Phantom Job icon above each non-party nameplate in the same Occult Crescent instance.</Description>
     <Tags>occult-crescent;phantom-jobs;nameplates</Tags>
   </PropertyGroup>
 </Project>
