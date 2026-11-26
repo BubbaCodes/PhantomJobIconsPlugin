@@ -17,6 +17,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using PhantomJobIconsMod.Windows;
+using NativeBounds = FFXIVClientStructs.FFXIV.Common.Math.Bounds;
 
 namespace PhantomJobIconsMod;
 
@@ -262,16 +263,22 @@ public sealed class Plugin : IDalamudPlugin
             ushort textHeight = 0;
             plate->NameText->GetTextDrawSize(&textWidth, &textHeight, null, 0, -1, false);
 
-            var boxWidth = nameNode->Width * scale;
+            NativeBounds bounds;
+            nameNode->GetBounds(&bounds);
+            var left = MathF.Min(bounds.Pos1.X, bounds.Pos2.X);
+            var top = MathF.Min(bounds.Pos1.Y, bounds.Pos2.Y);
+            var right = MathF.Max(bounds.Pos1.X, bounds.Pos2.X);
+            var bottom = MathF.Max(bounds.Pos1.Y, bounds.Pos2.Y);
+            var boxWidth = right - left;
             var drawnWidth = MathF.Min(textWidth * scale, boxWidth);
-            var nameHeight = nameNode->Height * scale;
+            var nameHeight = bottom - top;
             if (drawnWidth <= 0 || nameHeight <= 0)
                 continue;
 
-            var textLeft = nameNode->ScreenX + (boxWidth - drawnWidth) / 2f;
+            var textLeft = left + (boxWidth - drawnWidth) / 2f;
             var iconMin = new Vector2(
                 textLeft + (drawnWidth - PhantomJobIconSize) / 2f,
-                nameNode->ScreenY - PhantomJobIconGap - PhantomJobIconSize);
+                top - PhantomJobIconGap - PhantomJobIconSize);
             phantomJobIconsToDraw.Add(new PhantomJobIconDraw(
                 phantomJobIcons[jobId],
                 iconMin,
