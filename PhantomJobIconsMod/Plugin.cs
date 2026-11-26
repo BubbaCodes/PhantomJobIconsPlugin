@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private const string CommandName = "/pji";
     private const uint PhantomJobIconIdOffset = 82271;
+    private const int ContentMemberRefreshSeconds = 15;
     private const float PhantomJobIconSize = 24f;
     private const float PhantomJobIconGap = 4f;
 
@@ -141,7 +142,7 @@ public sealed class Plugin : IDalamudPlugin
         if (now < nextContentMemberRequestUtc)
             return;
 
-        nextContentMemberRequestUtc = now.AddSeconds(60);
+        nextContentMemberRequestUtc = now.AddSeconds(ContentMemberRefreshSeconds);
         var agentModule = AgentModule.Instance();
         if (agentModule == null)
         {
@@ -269,6 +270,12 @@ public sealed class Plugin : IDalamudPlugin
             var top = MathF.Min(bounds.Pos1.Y, bounds.Pos2.Y);
             var right = MathF.Max(bounds.Pos1.X, bounds.Pos2.X);
             var bottom = MathF.Max(bounds.Pos1.Y, bounds.Pos2.Y);
+
+            NativeBounds plateBounds;
+            ((AtkResNode*)plate->RootComponentNode)->GetBounds(&plateBounds);
+            var plateTop = MathF.Min(plateBounds.Pos1.Y, plateBounds.Pos2.Y);
+            top = MathF.Min(top, plateTop);
+
             var boxWidth = right - left;
             var drawnWidth = MathF.Min(textWidth * scale, boxWidth);
             var nameHeight = bottom - top;
